@@ -1,0 +1,34 @@
+services:
+  attendance:
+    build: .
+    container_name: attendance
+    restart: unless-stopped          # starts again by itself after a crash or server reboot
+    env_file: .env
+    environment:
+      - ATTENDANCE_DATA_DIR=/data
+      - TZ=Asia/Karachi
+    volumes:
+      - attendance_data:/data        # database + entrance line (survive rebuilds)
+      - face_models:/root/.insightface   # buffalo_s face model: downloaded once
+    expose:
+      - "5000"
+
+  caddy:                             # gives the dashboard a real https:// link
+    image: caddy:2
+    container_name: caddy
+    restart: unless-stopped
+    depends_on: [attendance]
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file: .env
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  attendance_data:
+  face_models:
+  caddy_data:
+  caddy_config:

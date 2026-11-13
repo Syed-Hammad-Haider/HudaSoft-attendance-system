@@ -1,0 +1,52 @@
+opencv-python>=4.9.0
+ultralytics>=8.2.0
+supervision==0.24.0
+# mediapipe: pinned EXACTLY, not >=. Confirmed directly (Session 14):
+# mediapipe releases from roughly 0.10.3x onward -- and the whole 1.x
+# line -- REMOVED mp.solutions.hands entirely (only the newer Tasks API
+# remains), which is the legacy API wave_detection/detector.py depends
+# on. An unpinned or newer mediapipe here means wave/hand detection
+# silently never runs at all, with no obvious error pointing at why --
+# see WaveDetector.__init__'s explicit version check for the runtime
+# guard that now catches this, but avoiding it at install time in the
+# first place is better than catching it at startup.
+mediapipe==0.10.14
+numpy>=1.26.0
+
+# Phase 2: face recognition + database
+# insightface (not the more commonly-tutorial'd dlib/`face_recognition`
+# library) was chosen because dlib requires compiling a C++ library from
+# source with no prebuilt wheel for recent Python versions -- a real
+# installation blocker, not a preference. insightface ships prebuilt
+# ONNX models via onnxruntime and installs cleanly; its recognition
+# model is also generally regarded as more accurate than the dlib
+# embeddings it replaces. See face_id/embedder.py for full reasoning.
+insightface>=0.7.3
+onnxruntime>=1.16.0
+# onnx: pinned to an older release, and protobuf pinned to the range
+# BOTH mediapipe and onnx can actually agree on -- confirmed directly
+# (Session 16) that installing insightface unpinned pulls in a current
+# onnx (1.2x), which requires protobuf>=6.31, while mediapipe==0.10.14
+# above requires protobuf<5 -- two hard, incompatible requirements in
+# the SAME process, with no single protobuf version satisfying both.
+# mediapipe can't be the one to move (see the pin above -- newer
+# mediapipe breaks wave detection outright), so onnx is pinned to
+# 1.16.0 instead, the newest version confirmed here to still work with
+# protobuf<5. If a future onnx/insightface upgrade is ever needed,
+# re-verify this whole combination together (import mediapipe.solutions
+# AND insightface.app.FaceAnalysis in the same process) before
+# upgrading either in isolation.
+onnx==1.16.0
+protobuf>=4.25.3,<5
+# sqlite3 is part of the Python standard library -- no separate
+# install needed for the database layer.
+
+# Web dashboard (web_dashboard.py) -- the real, day-to-day way to run
+# this system (see web_dashboard.py's own module docstring). waitress
+# is a production-grade WSGI server (unlike Flask's built-in
+# development server, which prints its own warning about not being
+# meant for production and isn't as robust under real, continuous
+# traffic) -- see DEPLOYMENT.md for how it's used to run this as a
+# persistent background service.
+flask>=3.0
+waitress>=3.0

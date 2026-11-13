@@ -1,0 +1,15 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+logs/
+.git/
+.env
+*.part
+yolov8n_openvino_model/
+*_openvino_model/
+attendance_system_github_ready.zip
+*.zip

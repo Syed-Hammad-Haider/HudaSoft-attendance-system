@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hudasoft — Sign In</title>
+<link rel="icon" type="image/png" href="/static/hudasoft_mark.png">
+<style>
+  :root {
+    --blue: #2563eb;
+    --blue-bright: #3b82f6;
+    --blue-dark: #1e40af;
+    --bg: #05070b;
+    --panel: #0d1117;
+    --panel-border: #1c2735;
+    --text: #e8eef6;
+    --text-dim: #8595a8;
+    --danger: #f0546b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    /* subtle blue glow behind the card */
+    background-image: radial-gradient(900px 500px at 50% -10%, rgba(37,99,235,0.28), transparent 60%),
+                      radial-gradient(700px 500px at 50% 120%, rgba(37,99,235,0.10), transparent 60%);
+    padding: 20px;
+  }
+  .card {
+    width: 100%; max-width: 400px; background: var(--panel);
+    border: 1px solid var(--panel-border); border-radius: 16px;
+    padding: 34px 30px 30px; box-shadow: 0 24px 60px rgba(0,0,0,0.55);
+  }
+  .brand { display: flex; flex-direction: column; align-items: center; margin-bottom: 22px; }
+  .brand img.logo { width: 150px; height: auto; border-radius: 14px; box-shadow: 0 8px 24px rgba(37,99,235,0.35); }
+  .brand .sub { margin-top: 12px; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-dim); }
+  h1 { font-size: 18px; font-weight: 650; margin: 4px 0 2px; text-align: center; }
+  .lead { text-align: center; color: var(--text-dim); font-size: 12.5px; margin-bottom: 22px; }
+  label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin: 14px 0 6px; }
+  input {
+    width: 100%; background: #070b11; border: 1px solid var(--panel-border);
+    color: var(--text); padding: 11px 13px; border-radius: 9px; font-size: 14px;
+  }
+  input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37,99,235,0.25); }
+  button.primary {
+    width: 100%; margin-top: 22px; background: var(--blue); color: #fff; border: none;
+    border-radius: 9px; padding: 12px; font-size: 14px; font-weight: 650; cursor: pointer;
+    transition: background 0.15s;
+  }
+  button.primary:hover:not(:disabled) { background: var(--blue-bright); }
+  button.primary:disabled { opacity: 0.55; cursor: not-allowed; }
+  .msg { margin-top: 16px; font-size: 12.5px; padding: 10px 12px; border-radius: 8px; display: none; }
+  .msg.error { display: block; background: rgba(240,84,107,0.12); border: 1px solid var(--danger); color: var(--danger); }
+  .msg.ok { display: block; background: rgba(37,99,235,0.12); border: 1px solid var(--blue); color: var(--blue-bright); }
+  .foot { text-align: center; color: var(--text-dim); font-size: 11px; margin-top: 20px; }
+  .hidden { display: none; }
+  .hint { color: var(--text-dim); font-size: 11px; margin-top: 6px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <img class="logo" src="/static/hudasoft_login.png" alt="Hudasoft">
+      <div class="sub">Attendance Dashboard</div>
+    </div>
+
+    <!-- SIGN IN (returning admin) -->
+    <form id="loginForm" onsubmit="return doLogin(event)">
+      <h1>Admin Sign In</h1>
+      <div class="lead">Enter your credentials to access the dashboard.</div>
+      <label for="loginUser">Username</label>
+      <input id="loginUser" type="text" autocomplete="username" autofocus>
+      <label for="loginPass">Password</label>
+      <input id="loginPass" type="password" autocomplete="current-password">
+      <button class="primary" type="submit" id="loginBtn">Sign In</button>
+    </form>
+
+    <!-- FIRST-RUN SETUP (no admin yet) -->
+    <form id="setupForm" class="hidden" onsubmit="return doSetup(event)">
+      <h1>Create your admin account</h1>
+      <div class="lead">First-time setup — this secures your dashboard.</div>
+      <label for="setupUser">Username</label>
+      <input id="setupUser" type="text" autocomplete="username">
+      <div class="hint">At least 3 characters.</div>
+      <label for="setupPass">Password</label>
+      <input id="setupPass" type="password" autocomplete="new-password">
+      <div class="hint">At least 6 characters.</div>
+      <label for="setupPass2">Confirm password</label>
+      <input id="setupPass2" type="password" autocomplete="new-password">
+      <button class="primary" type="submit" id="setupBtn">Create account &amp; sign in</button>
+    </form>
+
+    <div class="msg" id="msg"></div>
+    <div class="foot">Hudasoft · Secure Entrance Attendance</div>
+  </div>
+
+<script>
+function showMsg(text, kind) {
+  const m = document.getElementById('msg');
+  m.textContent = text; m.className = 'msg ' + (kind || 'error');
+}
+function clearMsg() { document.getElementById('msg').className = 'msg'; }
+
+// Decide which form to show: setup on a fresh install, otherwise sign-in.
+(async function init() {
+  try {
+    const s = await (await fetch('/api/auth/status')).json();
+    if (s.authenticated) { window.location.href = '/'; return; }
+    if (s.needs_setup) {
+      document.getElementById('loginForm').classList.add('hidden');
+      document.getElementById('setupForm').classList.remove('hidden');
+      document.getElementById('setupUser').focus();
+    }
+  } catch (e) { /* default to the sign-in form */ }
+})();
+
+async function doLogin(e) {
+  e.preventDefault();
+  clearMsg();
+  const btn = document.getElementById('loginBtn');
+  const username = document.getElementById('loginUser').value.trim();
+  const password = document.getElementById('loginPass').value;
+  if (!username || !password) { showMsg('Enter your username and password.'); return false; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, password}),
+    });
+    const data = await res.json();
+    if (res.ok) { showMsg('Welcome back — loading dashboard…', 'ok'); window.location.href = '/'; }
+    else {
+      if (data.needs_setup) { location.reload(); return false; }
+      showMsg(data.error || 'Could not sign in.');
+      btn.disabled = false; btn.textContent = 'Sign In';
+    }
+  } catch (err) {
+    showMsg('Network error — please try again.');
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+  return false;
+}
+
+async function doSetup(e) {
+  e.preventDefault();
+  clearMsg();
+  const btn = document.getElementById('setupBtn');
+  const username = document.getElementById('setupUser').value.trim();
+  const password = document.getElementById('setupPass').value;
+  const confirm = document.getElementById('setupPass2').value;
+  if (password !== confirm) { showMsg('The two passwords do not match.'); return false; }
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    const res = await fetch('/api/auth/setup', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, password}),
+    });
+    const data = await res.json();
+    if (res.ok) { showMsg('Account created — loading dashboard…', 'ok'); window.location.href = '/'; }
+    else { showMsg(data.error || 'Could not create account.'); btn.disabled = false; btn.textContent = 'Create account & sign in'; }
+  } catch (err) {
+    showMsg('Network error — please try again.');
+    btn.disabled = false; btn.textContent = 'Create account & sign in';
+  }
+  return false;
+}
+</script>
+</body>
+</html>

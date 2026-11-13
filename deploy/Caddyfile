@@ -1,0 +1,9 @@
+# SITE_ADDRESS comes from .env:
+#   a domain (e.g. attendance.hudasoft.com)  -> free HTTPS certificate automatically
+#   :80                                      -> plain http on the server's IP (testing only)
+{$SITE_ADDRESS::80} {
+	# flush_interval -1: do not buffer the live video stream
+	reverse_proxy attendance:5000 {
+		flush_interval -1
+	}
+}

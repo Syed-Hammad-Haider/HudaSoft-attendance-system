@@ -1,0 +1,27 @@
+# Runtime-generated files that shouldn't be tracked/shipped -- the
+# database contains real employee face data and attendance history,
+# and logs can grow large; neither belongs in version control.
+database/attendance.db
+database/attendance.db-wal
+database/attendance.db-shm
+logs/
+config/entrance_line_calibration.json
+attendance_export.csv
+*.csv
+
+# YOLO model weights auto-download into the working directory on first
+# run (ultralytics.YOLO("yolov8n.pt") fetches it if not already
+# present) -- a runtime-fetched binary, not source, same reasoning as
+# the rest of this file.
+*.pt
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Exported model folder and partial downloads
+yolov8n_openvino_model/
+*_openvino_model/
+*.part
+.env
