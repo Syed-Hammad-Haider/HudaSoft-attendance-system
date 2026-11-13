@@ -149,7 +149,36 @@ class IPCameraSource(BaseVideoSource):
             if not self._reconnect():
                 return None
 
-        return self._reader.get_latest() if self._reader is not None else None
+        frame = self._reader.get_latest() if self._reader is not None else None
+        return self._fit_to_configured_size(frame)
+
+    def _fit_to_configured_size(self, frame: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        """
+        Every geometry calculation in the app (entrance line, crossing
+        detection, the dashboard overlay) assumes frames of exactly
+        frame_width x frame_height. Phone/IP cameras send whatever size
+        they like (e.g. DroidCam 1280x720 or 320x240), which drew the
+        entrance line at the wrong length/place and made crossings fire
+        at the wrong spot. Scale the frame to fit inside the configured
+        size, keeping its shape (black bars fill any leftover space, so
+        faces are never stretched).
+        """
+        if frame is None:
+            return None
+        target_w, target_h = int(self._config.frame_width), int(self._config.frame_height)
+        h, w = frame.shape[:2]
+        if (w, h) == (target_w, target_h) or w == 0 or h == 0:
+            return frame
+        scale = min(target_w / w, target_h / h)
+        new_w, new_h = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+        interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=interp)
+        if (new_w, new_h) == (target_w, target_h):
+            return resized
+        canvas = np.zeros((target_h, target_w, 3), dtype=frame.dtype)
+        x0, y0 = (target_w - new_w) // 2, (target_h - new_h) // 2
+        canvas[y0:y0 + new_h, x0:x0 + new_w] = resized
+        return canvas
 
     def is_opened(self) -> bool:
         return self._capture is not None and self._capture.isOpened()
