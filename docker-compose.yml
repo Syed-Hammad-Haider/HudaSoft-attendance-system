@@ -7,6 +7,8 @@ services:
     environment:
       - ATTENDANCE_DATA_DIR=/data
       - TZ=Asia/Karachi
+      - STREAM_FPS=10          # live video to the browser: 10 fps is smooth enough and much lighter over the internet
+      - STREAM_QUALITY=60
     volumes:
       - attendance_data:/data        # database + entrance line (survive rebuilds)
       - face_models:/root/.insightface   # buffalo_s face model: downloaded once

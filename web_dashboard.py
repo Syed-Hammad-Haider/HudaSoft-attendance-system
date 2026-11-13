@@ -42,6 +42,7 @@ import csv
 import datetime
 import io
 import logging
+import os
 import threading
 import time
 import uuid
@@ -746,6 +747,14 @@ def _detection_loop():
 # it, but render() still takes the argument.
 _DISPLAY_EVENT_LOG = EventLog(1)
 
+# Live-video stream tuning. Defaults (30 fps, quality 72) match the original
+# laptop behaviour. On a cloud server the video has to travel over the
+# internet to the viewer's browser, so docker-compose lowers these (e.g. 10
+# fps, quality 60): far less bandwidth and CPU, no visible effect on
+# detection, which never reads these values.
+_STREAM_FPS = max(1.0, float(os.environ.get("STREAM_FPS", "30") or 30))
+_STREAM_QUALITY = min(95, max(30, int(os.environ.get("STREAM_QUALITY", "72") or 72)))
+
 
 def _display_loop():
     """
@@ -757,7 +766,7 @@ def _display_loop():
     wave, or face recognition, and it only ever READS the detection loop's
     published snapshot, so it cannot affect accuracy.
     """
-    target_dt = 1.0 / 30.0   # cap the display at ~30 fps
+    target_dt = 1.0 / _STREAM_FPS   # display rate (30 fps on a laptop, lower on a server)
     last_raw = None
     while state.running:
         tick = time.perf_counter()
@@ -808,7 +817,7 @@ def _display_loop():
             except Exception:
                 logger.exception("Display render failed for one frame; showing raw frame.")
 
-        ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 72])
+        ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _STREAM_QUALITY])
         if ok:
             with state.lock:
                 state.latest_jpeg = jpeg.tobytes()
@@ -819,12 +828,16 @@ def _display_loop():
 
 
 def _mjpeg_generator():
+    last_sent = None
     while True:
         with state.lock:
             frame_bytes = state.latest_jpeg
-        if frame_bytes:
+        # Only send a frame when it is NEW: re-sending the same picture
+        # wasted bandwidth, which made the feed freeze over slow internet.
+        if frame_bytes and frame_bytes is not last_sent:
+            last_sent = frame_bytes
             yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
-        time.sleep(0.03)  # ~30fps cap on the stream regardless of detection loop's own rate
+        time.sleep(1.0 / _STREAM_FPS)
 
 
 def _mjpeg_generator_raw():
