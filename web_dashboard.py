@@ -653,9 +653,6 @@ def _detection_loop():
             gate_state = gate.update(person.track_id, center)
             gate_states[person.track_id] = gate_state
 
-            if gate_state.just_crossed:
-                event_log.add(f"ID {person.track_id}: crossed -> {gate_state.last_direction.value}")
-
             wave_result = wave_detector.process(frame, person)
             wave_results[person.track_id] = wave_result
 
@@ -663,6 +660,13 @@ def _detection_loop():
             employee_id = recognition.employee_id if recognition else None
             employee_name = recognition.full_name if recognition else None
             match_confidence = recognition.similarity if recognition else 0.0
+
+            # Crossing events show the employee's NAME when the face is already
+            # recognised (e.g. "Syed Hammad (ID:1): crossed -> ENTERING");
+            # only people not (yet) recognised fall back to the tracker ID.
+            if gate_state.just_crossed:
+                who = f"{employee_name} (ID:{employee_id})" if employee_name else f"ID {person.track_id}"
+                event_log.add(f"{who}: crossed -> {gate_state.last_direction.value}")
 
             display_names[person.track_id] = employee_name or f"ID {person.track_id}"
             status_labels[person.track_id] = _cached_status_label(employee_id)
