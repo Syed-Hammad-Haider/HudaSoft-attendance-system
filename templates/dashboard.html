@@ -1216,12 +1216,15 @@ async function saveCameraSource() {
 /* ===================== This browser's webcam (cloud servers) =====================
    On a cloud server there is no webcam. "Use this browser's webcam" makes THIS
    page the camera: it opens the webcam (after the browser asks permission) and
-   uploads ~8 small JPEG frames per second. Each upload waits for the previous
-   one, so frames can never pile up into a delay. Only one browser at a time:
+   uploads ~10 small JPEG frames per second, with at most 3 on the way at once,
+   so frames can never pile up into a delay. Only one browser at a time:
    if another source or browser is chosen, the server answers active:false and
    this page stops. Browsers allow the webcam only on https:// links. */
 const BCAM_KEY = 'bcamSenderId';
-const BCAM_FRAME_MS = 125;   // ~8 fps: about what the server analyses anyway
+const BCAM_FRAME_MS = 100;      // aim for ~10 fps (the server analyses ~8-10)
+const BCAM_MAX_IN_FLIGHT = 3;   // at most 3 uploads on the way at once -> no pile-up
+const BCAM_WIDTH = 480;         // small frames travel fast; plenty for detection
+const BCAM_QUALITY = 0.65;
 let bcamStream = null, bcamVideo = null, bcamCanvas = null, bcamRunning = false, bcamMemId = null;
 
 function bcamStoredId() { try { return localStorage.getItem(BCAM_KEY); } catch (e) { return null; } }
@@ -1252,29 +1255,34 @@ function bcamStop() {
 }
 
 async function bcamLoop() {
+  // Up to BCAM_MAX_IN_FLIGHT uploads travel at once. Waiting for each upload
+  // before sending the next capped the rate at ~3 fps on a far-away server
+  // (each round trip to Sydney is ~0.3 s), which looked laggy. A small fixed
+  // limit keeps it smooth AND still means frames can never pile up.
   if (bcamRunning) return;
   bcamRunning = true;
   const id = bcamMemId || bcamStoredId();
+  let inFlight = 0;
   while (bcamRunning && bcamVideo) {
     const t0 = performance.now();
     const w = bcamVideo.videoWidth, h = bcamVideo.videoHeight;
-    if (w && h) {
-      const scale = Math.min(1, 640 / w);
+    if (w && h && inFlight < BCAM_MAX_IN_FLIGHT) {
+      const scale = Math.min(1, BCAM_WIDTH / w);
       bcamCanvas.width = Math.round(w * scale); bcamCanvas.height = Math.round(h * scale);
       bcamCanvas.getContext('2d').drawImage(bcamVideo, 0, 0, bcamCanvas.width, bcamCanvas.height);
-      const blob = await new Promise(r => bcamCanvas.toBlob(r, 'image/jpeg', 0.7));
-      try {
-        const res = await fetch('/api/browser_camera/frame', {
-          method: 'POST', headers: {'Content-Type': 'image/jpeg', 'X-Sender-Id': id}, body: blob,
-        });
-        if (res.status === 401) { bcamStop(); break; }
+      const blob = await new Promise(r => bcamCanvas.toBlob(r, 'image/jpeg', BCAM_QUALITY));
+      inFlight++;
+      fetch('/api/browser_camera/frame', {
+        method: 'POST', body: blob,
+        headers: {'Content-Type': 'image/jpeg', 'X-Sender-Id': id, 'X-Frame-Seq': String(Date.now())},
+      }).then(async res => {
+        if (res.status === 401) { bcamStop(); return; }
         const data = await res.json().catch(() => ({}));
-        if (data.active === false) { bcamStop(); break; }
+        if (data.active === false) { bcamStop(); return; }
         bcamStatus("📷 This browser's webcam is the camera — keep this tab open and visible.");
-      } catch (e) {
+      }).catch(() => {
         bcamStatus('📷 Webcam: connection problem, retrying…');
-        await new Promise(r => setTimeout(r, 1000));
-      }
+      }).finally(() => { inFlight--; });
     }
     const wait = BCAM_FRAME_MS - (performance.now() - t0);
     if (wait > 0) await new Promise(r => setTimeout(r, wait));

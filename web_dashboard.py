@@ -1348,7 +1348,11 @@ def api_browser_camera_frame():
     if not body or len(body) > 3 * 1024 * 1024:
         return jsonify({"error": "frame missing or too large"}), 400
     try:
-        accepted = push_browser_frame(sender_id, body)
+        seq = int(request.headers.get("X-Frame-Seq") or -1)
+    except ValueError:
+        seq = -1
+    try:
+        accepted = push_browser_frame(sender_id, body, seq)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"active": accepted})

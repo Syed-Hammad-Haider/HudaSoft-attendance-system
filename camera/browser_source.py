@@ -34,6 +34,7 @@ _lock = threading.Lock()
 _latest_frame: Optional[np.ndarray] = None
 _latest_time: float = 0.0
 _active_sender: str = ""
+_latest_seq: int = -1
 
 
 def is_browser_source(source) -> bool:
@@ -44,10 +45,12 @@ def set_active_sender(sender_id: str) -> None:
     """Called when a page picks 'Use this browser's webcam'. Old frames are
     dropped so the previous browser's last picture never lingers."""
     global _active_sender, _latest_frame, _latest_time
+    global _latest_seq
     with _lock:
         _active_sender = (sender_id or "").strip()
         _latest_frame = None
         _latest_time = 0.0
+        _latest_seq = -1
 
 
 def get_active_sender() -> str:
@@ -55,16 +58,19 @@ def get_active_sender() -> str:
         return _active_sender
 
 
-def push_frame(sender_id: str, jpeg_bytes: bytes) -> bool:
+def push_frame(sender_id: str, jpeg_bytes: bytes, seq: int = -1) -> bool:
     """Store one uploaded frame. Returns False if this sender is not the
-    active one (so that page knows to stop)."""
-    global _latest_frame, _latest_time
+    active one (so that page knows to stop). `seq` is the page's frame
+    counter: several uploads travel at once, so a slower older frame that
+    arrives after a newer one is ignored instead of jumping back in time."""
+    global _latest_frame, _latest_time, _latest_seq
     global _active_sender
     with _lock:
         if not _active_sender and sender_id:
             # After a server restart nobody is registered yet: the first
             # page that is still sending (it chose this mode earlier) takes over.
             _active_sender = sender_id
+            _latest_seq = -1
         if sender_id != _active_sender:
             return False
     data = np.frombuffer(jpeg_bytes, dtype=np.uint8)
@@ -74,6 +80,10 @@ def push_frame(sender_id: str, jpeg_bytes: bytes) -> bool:
     with _lock:
         if sender_id != _active_sender:
             return False
+        if 0 <= seq <= _latest_seq:
+            return True            # out-of-order older frame: skip it
+        if seq >= 0:
+            _latest_seq = seq
         _latest_frame = frame
         _latest_time = time.time()
     return True
