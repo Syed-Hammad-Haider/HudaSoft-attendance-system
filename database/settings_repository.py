@@ -66,9 +66,10 @@ def get_camera_source(db_path: Optional[Path] = None):
     The configured camera source, admin-settable from the dashboard so
     switching between the laptop webcam and a phone (DroidCam / IP
     Webcam over Wi-Fi) never needs a code edit. Returns an int webcam
-    index (0, 1, ...) when the stored value is empty or numeric, else
+    index (0, 1, ...) when the stored value is numeric, "browser" for the
+    browser webcam, else
     the URL string as-is (e.g. http://192.168.1.50:4747/video). None
-    stored -> default to webcam index 0, matching CameraConfig.source.
+    stored -> default to "browser" (this browser's webcam).
     """
     raw = get_setting("camera_source", db_path=db_path)
     if raw is None or raw.strip() == "":
@@ -78,7 +79,10 @@ def get_camera_source(db_path: Optional[Path] = None):
         import os
         raw = os.environ.get("CAMERA_SOURCE", "")
         if raw.strip() == "":
-            return 0
+            # Default: the webcam of the browser viewing the dashboard
+            # (camera/browser_source.py). Works on a cloud server, which
+            # has no webcam of its own, and on a laptop (localhost).
+            return "browser"
     raw = raw.strip()
     if raw.isdigit():
         return int(raw)
@@ -93,7 +97,7 @@ def get_camera_source_raw(db_path: Optional[Path] = None) -> str:
 
 
 def set_camera_source(source: str, db_path: Optional[Path] = None) -> None:
-    """Store the camera source. A blank string means 'webcam index 0'."""
+    """Store the camera source. A blank string means the default (browser webcam)."""
     set_setting("camera_source", (source or "").strip(), db_path=db_path)
 
 

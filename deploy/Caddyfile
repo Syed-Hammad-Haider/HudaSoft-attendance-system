@@ -1,9 +1,17 @@
 # SITE_ADDRESS comes from .env:
-#   a domain (e.g. attendance.hudasoft.com)  -> free HTTPS certificate automatically
-#   :80                                      -> plain http on the server's IP (testing only)
+#   :80                          -> plain http on the server's IP (testing only)
+#   13-238-25-153.sslip.io       -> free name for the server's IP, with a free
+#                                   HTTPS certificate (needed for the browser webcam)
+#   attendance.yourdomain.com    -> your own domain, also with free HTTPS
 {$SITE_ADDRESS::80} {
 	# flush_interval -1: do not buffer the live video stream
 	reverse_proxy attendance:5000 {
 		flush_interval -1
 	}
+}
+
+# Old bookmarks: http://<server IP> is sent to the https name above.
+# PUBLIC_IP comes from .env; unset = this block is never used.
+http://{$PUBLIC_IP:localhost} {
+	redir https://{$SITE_ADDRESS}{uri}
 }

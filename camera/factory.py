@@ -11,6 +11,7 @@ get back something implementing BaseVideoSource either way.
 """
 
 from camera.base_source import BaseVideoSource
+from camera.browser_source import BrowserCameraSource, is_browser_source
 from camera.ip_camera_source import IPCameraSource
 from camera.webcam_source import WebcamSource
 from config.settings import CameraConfig
@@ -21,6 +22,8 @@ _IP_URL_PREFIXES = ("rtsp://", "http://", "https://")
 def create_video_source(config: CameraConfig) -> BaseVideoSource:
     """Return a BaseVideoSource instance appropriate for the given config."""
     source = config.source
+    if is_browser_source(source):
+        return BrowserCameraSource(config)   # webcam of the browser viewing the dashboard
     if isinstance(source, str) and source.lower().startswith(_IP_URL_PREFIXES):
         return IPCameraSource(config)
     return WebcamSource(config)

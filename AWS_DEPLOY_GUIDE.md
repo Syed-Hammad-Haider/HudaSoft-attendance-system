@@ -198,3 +198,23 @@ Never run `docker compose down -v`: `-v` deletes the database volume.
   useful so the admin can open the dashboard from anywhere.
 - Face data is biometric data: keep the server private (login, HTTPS,
   SSH only from your IP) and get the office's consent.
+
+---
+
+## Free HTTPS link + "Use this browser's webcam"
+
+Browsers only allow the webcam on https:// pages. Free https without buying a domain:
+
+1. On the server: `nano .env` and set
+   ```
+   SITE_ADDRESS=13-238-25-153.sslip.io
+   PUBLIC_IP=13.238.25.153
+   ```
+   (your Elastic IP, with dashes in the first line). Save: Ctrl+O, Enter, Ctrl+X.
+2. `docker compose up -d --build`
+3. Open `https://13-238-25-153.sslip.io` (the old `http://13.238.25.153` forwards there).
+   Caddy gets a free certificate by itself; the first visit can take ~30 seconds.
+
+Then in the dashboard: Settings -> Camera Source -> **Use this browser's webcam** -> click **Allow**.
+That device's webcam is now the camera while its tab stays open (and visible).
+Only one browser at a time: choosing another source or another browser stops the previous one.

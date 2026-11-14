@@ -66,6 +66,12 @@ from flask import (
 )
 
 from camera.factory import create_video_source
+from camera.browser_source import (
+    BROWSER_SOURCE,
+    is_browser_source,
+    push_frame as push_browser_frame,
+    set_active_sender as set_browser_sender,
+)
 from config.settings import CONFIG, WAVE_SENSITIVITY_PRESETS, apply_wave_sensitivity
 from database.attendance_repository import (
     delete_event,
@@ -431,6 +437,8 @@ def _build_entrance_gate():
 
 def _camera_label(source) -> str:
     """Human-friendly label for a camera source, for the Settings UI."""
+    if is_browser_source(source):
+        return "This browser's webcam"
     if isinstance(source, int) or (isinstance(source, str) and source.isdigit()):
         return f"Webcam #{source}"
     return str(source)
@@ -587,12 +595,20 @@ def _detection_loop():
                 # the SAME source on the backoff, and still honors a pending
                 # switch first). The loop never dies -- "Use PC Webcam" and
                 # a corrected IP both always work.
-                logger.warning("Camera stopped delivering frames -- dropping source to reconnect.")
-                with state.lock:
-                    state.camera_error = (
-                        "Camera stopped delivering frames -- reconnecting. "
-                        "Check the camera, or switch source in Settings."
-                    )
+                if is_browser_source(CONFIG.camera.source):
+                    # Not an error: simply no browser is sending its webcam yet.
+                    with state.lock:
+                        state.camera_error = (
+                            "Waiting for a webcam: click \"Start this browser's webcam\" "
+                            "on the Live Monitor (or connect a phone/IP camera in Settings)."
+                        )
+                else:
+                    logger.warning("Camera stopped delivering frames -- dropping source to reconnect.")
+                    with state.lock:
+                        state.camera_error = (
+                            "Camera stopped delivering frames -- reconnecting. "
+                            "Check the camera, or switch source in Settings."
+                        )
                 try:
                     with state.source_lock:
                         state.current_source = None
@@ -1249,7 +1265,8 @@ def api_get_settings():
     return jsonify({
         "day_boundary_hour": get_day_boundary_hour(),
         "sensitivity": state.sensitivity,
-        "camera_source": get_camera_source_raw(),   # "" means webcam
+        "camera_source": get_camera_source_raw(),   # "" means the default (browser webcam)
+        "camera_is_browser": is_browser_source(get_camera_source()),
         "camera_source_label": cam_label,
         "camera_error": cam_error,
         "min_action_gap_hours": get_min_action_gap_hours(),
@@ -1297,14 +1314,44 @@ def api_set_camera():
     # Accept a plain IP or host for DroidCam and expand it to DroidCam's
     # default MJPEG endpoint, so the admin can just type "192.168.1.7".
     expanded = raw
-    if raw and not raw.lower().startswith(("http://", "https://", "rtsp://")) and not raw.isdigit():
-        expanded = f"http://{raw}:4747/video"
+    if is_browser_source(raw):
+        # "Use this browser's webcam": this page becomes the camera; any
+        # other page that was sending gets refused and stops.
+        expanded = BROWSER_SOURCE
+        set_browser_sender(str(data.get("sender_id") or ""))
+    else:
+        set_browser_sender("")   # switching away: stop accepting browser frames
+        if raw and not raw.lower().startswith(("http://", "https://", "rtsp://")) and not raw.isdigit():
+            expanded = f"http://{raw}:4747/video"
     set_camera_source(expanded)
     new_source = get_camera_source()  # normalized (int or url)
     with state.lock:
         state.pending_camera_source = new_source
     logger.info("Camera source change requested via dashboard: %r", new_source)
     return jsonify({"ok": True, "camera_source": expanded, "label": _camera_label(new_source)})
+
+
+@app.route("/api/browser_camera/frame", methods=["POST"])
+def api_browser_camera_frame():
+    """
+    One JPEG frame from the browser that chose "Use this browser's webcam"
+    (Settings). Login-protected like every /api/ route. Answers
+    {"active": false} when this page is no longer the camera (another
+    source or another browser was chosen) so the page stops sending.
+    """
+    sender_id = (request.headers.get("X-Sender-Id") or "").strip()
+    # Saved setting, not CONFIG: it changes the instant Settings is saved,
+    # while the detection loop applies the switch a moment later.
+    if not is_browser_source(get_camera_source()):
+        return jsonify({"active": False})
+    body = request.get_data(cache=False)
+    if not body or len(body) > 3 * 1024 * 1024:
+        return jsonify({"error": "frame missing or too large"}), 400
+    try:
+        accepted = push_browser_frame(sender_id, body)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"active": accepted})
 
 
 @app.route("/api/settings/day_boundary", methods=["POST"])

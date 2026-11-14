@@ -363,6 +363,8 @@
           </div>
         </div>
         <div id="cameraError"></div>
+        <button id="startBrowserCamBtn" style="display:none;margin:8px 0;" onclick="useBrowserWebcam()">▶ Start this browser's webcam</button>
+        <div class="hint browser-cam-status" style="display:none;margin:6px 0;"></div>
         <div class="wave-banner"><span id="lastEventText">Waiting for activity...</span></div>
         <div class="status-people" id="statusPeople"></div>
 
@@ -593,7 +595,7 @@
       <div class="hint">How deliberate a hand-wave gesture must be to register. Applies live, immediately, to everyone currently in frame.</div>
     </div>
 
-    <div class="panel settings-form" data-search="camera source droidcam ip webcam phone mobile wifi stream connect url address">
+    <div class="panel settings-form" data-search="camera source droidcam ip webcam phone mobile wifi stream connect url address browser laptop">
       <div class="panel-title"><span>Camera Source</span></div>
       <div class="hint" style="margin-bottom:8px;">
         Currently using: <b id="currentCameraLabel">—</b>
@@ -608,8 +610,14 @@
       </div>
       <div class="row" style="margin-top: 12px;">
         <button onclick="saveCameraSource()">Connect</button>
-        <button class="secondary" onclick="useWebcam()">Use PC Webcam</button>
+        <button class="secondary" onclick="useBrowserWebcam()">Use this browser's webcam</button>
       </div>
+      <div class="hint" style="margin-top:8px;">
+        <b>Connect</b> = use the phone / IP camera address typed above.
+        <b>Use this browser's webcam</b> (the default) = the webcam of the device you are using right now; it sends
+        video to the server while this tab stays open. Needs the secure <b>https://</b> link.
+      </div>
+      <div class="hint browser-cam-status" style="display:none;margin-top:6px;"></div>
       <div id="cameraMessage"></div>
     </div>
 
@@ -1065,7 +1073,7 @@ async function refreshSettings() {
   document.getElementById('dayBoundaryHour').value = data.day_boundary_hour;
   document.getElementById('sensitivitySelectSettings').value = data.sensitivity;
   document.getElementById('currentCameraLabel').textContent = data.camera_source_label || '—';
-  document.getElementById('cameraSourceInput').value = data.camera_source || '';
+  document.getElementById('cameraSourceInput').value = data.camera_is_browser ? '' : (data.camera_source || '');
   document.getElementById('minGapHours').value = data.min_action_gap_hours;
   document.getElementById('mirrorToggle').checked = !!data.mirror_preview;
   const errEl = document.getElementById('cameraErrorSettings');
@@ -1185,6 +1193,12 @@ async function saveDayBoundary() {
 async function saveCameraSource() {
   const source = document.getElementById('cameraSourceInput').value.trim();
   const msgEl = document.getElementById('cameraMessage');
+  if (!source || source.toLowerCase() === 'browser') {
+    msgEl.innerHTML = "<div class=\"banner-error\">Type the phone / IP camera address first — or click " +
+      "<b>Use this browser's webcam</b>.</div>";
+    return;
+  }
+  bcamStop();   // choosing a phone/IP camera ends this browser's webcam mode
   msgEl.innerHTML = '<div class="banner-ok">Connecting to camera…</div>';
   const res = await fetch('/api/settings/camera', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({source}),
@@ -1198,10 +1212,145 @@ async function saveCameraSource() {
   }
 }
 
-async function useWebcam() {
-  document.getElementById('cameraSourceInput').value = '';
-  await saveCameraSource();
+
+/* ===================== This browser's webcam (cloud servers) =====================
+   On a cloud server there is no webcam. "Use this browser's webcam" makes THIS
+   page the camera: it opens the webcam (after the browser asks permission) and
+   uploads ~8 small JPEG frames per second. Each upload waits for the previous
+   one, so frames can never pile up into a delay. Only one browser at a time:
+   if another source or browser is chosen, the server answers active:false and
+   this page stops. Browsers allow the webcam only on https:// links. */
+const BCAM_KEY = 'bcamSenderId';
+const BCAM_FRAME_MS = 125;   // ~8 fps: about what the server analyses anyway
+let bcamStream = null, bcamVideo = null, bcamCanvas = null, bcamRunning = false, bcamMemId = null;
+
+function bcamStoredId() { try { return localStorage.getItem(BCAM_KEY); } catch (e) { return null; } }
+function bcamStoreId(id) { try { id ? localStorage.setItem(BCAM_KEY, id) : localStorage.removeItem(BCAM_KEY); } catch (e) {} }
+function bcamStatus(text) {
+  document.querySelectorAll('.browser-cam-status').forEach(el => {
+    el.textContent = text; el.style.display = text ? 'block' : 'none';
+  });
 }
+
+async function bcamStartCamera() {
+  if (bcamStream) return;
+  bcamStream = await navigator.mediaDevices.getUserMedia({
+    video: {width: {ideal: 640}, height: {ideal: 480}, frameRate: {ideal: 15}}, audio: false,
+  });
+  bcamVideo = document.createElement('video');
+  bcamVideo.muted = true; bcamVideo.playsInline = true; bcamVideo.srcObject = bcamStream;
+  await bcamVideo.play();
+  bcamCanvas = document.createElement('canvas');
+}
+
+function bcamStop() {
+  bcamRunning = false;
+  if (bcamStream) bcamStream.getTracks().forEach(t => t.stop());
+  bcamStream = null; bcamVideo = null; bcamMemId = null;
+  bcamStoreId(null);
+  bcamStatus('');
+}
+
+async function bcamLoop() {
+  if (bcamRunning) return;
+  bcamRunning = true;
+  const id = bcamMemId || bcamStoredId();
+  while (bcamRunning && bcamVideo) {
+    const t0 = performance.now();
+    const w = bcamVideo.videoWidth, h = bcamVideo.videoHeight;
+    if (w && h) {
+      const scale = Math.min(1, 640 / w);
+      bcamCanvas.width = Math.round(w * scale); bcamCanvas.height = Math.round(h * scale);
+      bcamCanvas.getContext('2d').drawImage(bcamVideo, 0, 0, bcamCanvas.width, bcamCanvas.height);
+      const blob = await new Promise(r => bcamCanvas.toBlob(r, 'image/jpeg', 0.7));
+      try {
+        const res = await fetch('/api/browser_camera/frame', {
+          method: 'POST', headers: {'Content-Type': 'image/jpeg', 'X-Sender-Id': id}, body: blob,
+        });
+        if (res.status === 401) { bcamStop(); break; }
+        const data = await res.json().catch(() => ({}));
+        if (data.active === false) { bcamStop(); break; }
+        bcamStatus("📷 This browser's webcam is the camera — keep this tab open and visible.");
+      } catch (e) {
+        bcamStatus('📷 Webcam: connection problem, retrying…');
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+    const wait = BCAM_FRAME_MS - (performance.now() - t0);
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  }
+}
+
+async function useBrowserWebcam() {
+  const settingsMsg = document.getElementById('cameraMessage');
+  // Messages go to the Settings panel AND under the Live Monitor video.
+  const msgEl = {set innerHTML(html) {
+    settingsMsg.innerHTML = html;
+    const tmp = document.createElement('div'); tmp.innerHTML = html;
+    bcamStatus(tmp.textContent.trim());
+  }};
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    msgEl.innerHTML = '<div class="banner-error">Browsers only allow the webcam on a secure <b>https://</b> link. ' +
+      'Open the dashboard through its https:// address and try again.</div>';
+    return;
+  }
+  msgEl.innerHTML = '<div class="banner-ok">Asking for webcam permission…</div>';
+  try {
+    await bcamStartCamera();
+  } catch (e) {
+    msgEl.innerHTML = `<div class="banner-error">Webcam not available (${esc(e.name || e.message || 'error')}). ` +
+      'Click "Allow" when the browser asks for the camera, then try again.</div>';
+    return;
+  }
+  const id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(36).slice(2));
+  bcamMemId = id; bcamStoreId(id);
+  const res = await fetch('/api/settings/camera', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({source: 'browser', sender_id: id}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) {
+    msgEl.innerHTML = "<div class=\"banner-ok\">This browser's webcam is now the camera. Keep this tab open " +
+      '(closing it stops the camera). Check the Live Monitor in a few seconds.</div>';
+    bcamLoop();
+    setTimeout(refreshSettings, 2500);
+  } else {
+    msgEl.innerHTML = `<div class="banner-error">${esc(data.error || 'Could not switch camera.')}</div>`;
+    bcamStop();
+  }
+}
+
+// Show "Start this browser's webcam" on the Live Monitor when the camera
+// source is the browser webcam and this page is not the one sending.
+async function bcamRefreshButton() {
+  const btn = document.getElementById('startBrowserCamBtn');
+  if (!btn) return;
+  try {
+    const h = await (await fetch('/healthz')).json();
+    const isBrowser = (h.camera || '') === "This browser's webcam";
+    if (!isBrowser || bcamRunning) { btn.style.display = 'none'; return; }
+    btn.textContent = h.camera_ok ? "▶ Use my webcam instead (another browser is the camera now)"
+                                  : "▶ Start this browser's webcam";
+    btn.style.display = 'inline-block';
+  } catch (e) { /* ignore */ }
+}
+setInterval(bcamRefreshButton, 4000);
+bcamRefreshButton();
+
+// After a page reload, carry on sending if this browser is still the chosen camera.
+(async function bcamResume() {
+  const id = bcamStoredId();
+  if (!id) return;
+  try {
+    const s = await (await fetch('/api/settings')).json();
+    if (!s.camera_is_browser) { bcamStoreId(null); return; }
+    bcamMemId = id;
+    await bcamStartCamera();
+    bcamLoop();
+  } catch (e) {
+    bcamStatus("📷 Webcam paused — open Settings and click \"Use this browser's webcam\" again.");
+  }
+})();
 
 /* ============================== Register tab ============================== */
 let regSessionId = null;
